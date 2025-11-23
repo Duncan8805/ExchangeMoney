@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { translations, type Language } from '../i18n';
 import HistoryChart from './HistoryChart';
 
@@ -80,6 +80,9 @@ export default function ExchangeForm() {
     const [historyData, setHistoryData] = useState<HistoryData[]>([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [timeRange, setTimeRange] = useState<'14D' | '3Y' | '5Y' | '10Y' | 'Max'>('14D');
+
+    // Track triggered alerts to prevent repeated notifications
+    const triggeredAlerts = useRef<Set<string>>(new Set());
 
     const toggleLanguage = () => {
         const newLang = lang === 'en' ? 'zh' : 'en';
@@ -189,7 +192,10 @@ export default function ExchangeForm() {
             if (alert.condition === 'above' && currentRate >= alert.targetRate) triggered = true;
             if (alert.condition === 'below' && currentRate <= alert.targetRate) triggered = true;
 
-            if (triggered) {
+            if (triggered && !triggeredAlerts.current.has(alert.id)) {
+                // Mark this alert as triggered
+                triggeredAlerts.current.add(alert.id);
+
                 // Request permission if not granted
                 if (Notification.permission === 'default') {
                     Notification.requestPermission();
@@ -212,7 +218,7 @@ export default function ExchangeForm() {
             }
         });
 
-    }, [amount, fromCurrency, toCurrency, rates, alerts, t]);
+    }, [rates, alerts, t]);
 
     // Fetch History Effect
     useEffect(() => {
