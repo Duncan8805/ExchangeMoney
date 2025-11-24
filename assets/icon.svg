@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+<stop offset="100%" style="stop-color:#a855f7;stop-opacity:1" />
+</linearGradient>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000000" flood-opacity="0.2"/>
+</filter>
+</defs>
+<rect width="512" height="512" rx="110" fill="url(#grad1)"/>
+<circle cx="256" cy="256" r="160" stroke="white" stroke-width="20" stroke-opacity="0.2"/>
+<path d="M256 140V372M256 140C210 140 180 160 180 200C180 245 220 256 256 256C292 256 332 267 332 312C332 352 302 372 256 372M256 140V120M256 372V392" stroke="white" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" filter="url(#shadow)"/>
+<path d="M390 256C390 181.99 330.01 122 256 122" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.5"/>
+<path d="M390 256L365 220" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.5"/>
+<path d="M122 256C122 330.01 181.99 390 256 390" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.5"/>
+<path d="M122 256L147 292" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.5"/>
+</svg>

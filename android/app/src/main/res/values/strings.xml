@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">ExchangeMoney</string>
-    <string name="title_activity_main">ExchangeMoney</string>
+    <string name="app_name">Rate+</string>
+    <string name="title_activity_main">Rate+</string>
     <string name="package_name">com.example.exchangemoney</string>
     <string name="custom_url_scheme">com.example.exchangemoney</string>
 </resources>

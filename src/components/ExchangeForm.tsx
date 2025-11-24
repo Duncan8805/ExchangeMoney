@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
 import { translations, type Language } from '../i18n';
 import HistoryChart from './HistoryChart';
 
@@ -197,24 +199,65 @@ export default function ExchangeForm() {
                 triggeredAlerts.current.add(alert.id);
 
                 // Request permission if not granted
-                if (Notification.permission === 'default') {
-                    Notification.requestPermission();
-                }
+                const sendNotification = async () => {
+                    try {
+                        if (Capacitor.isNativePlatform()) {
+                            // Native Notification
+                            const perm = await LocalNotifications.checkPermissions();
+                            if (perm.display !== 'granted') {
+                                const newPerm = await LocalNotifications.requestPermissions();
+                                if (newPerm.display !== 'granted') return;
+                            }
 
-                if (Notification.permission === 'granted') {
-                    const body = t.alerts.body(
-                        alert.from,
-                        currentRate.toFixed(4),
-                        alert.to,
-                        alert.condition,
-                        alert.targetRate
-                    );
+                            await LocalNotifications.schedule({
+                                notifications: [
+                                    {
+                                        title: t.alerts.triggered,
+                                        body: t.alerts.body(
+                                            alert.from,
+                                            currentRate.toFixed(4),
+                                            alert.to,
+                                            alert.condition,
+                                            alert.targetRate
+                                        ),
+                                        id: parseInt(alert.id.slice(-8)), // id must be int
+                                        schedule: { at: new Date(Date.now() + 100) }, // immediate
+                                        sound: undefined,
+                                        attachments: undefined,
+                                        actionTypeId: "",
+                                        extra: null
+                                    }
+                                ]
+                            });
+                        } else {
+                            // Web Notification Fallback
+                            if ('Notification' in window) {
+                                if (Notification.permission === 'default') {
+                                    await Notification.requestPermission();
+                                }
 
-                    new Notification(t.alerts.triggered, {
-                        body: body,
-                        icon: '/vite.svg'
-                    });
-                }
+                                if (Notification.permission === 'granted') {
+                                    const body = t.alerts.body(
+                                        alert.from,
+                                        currentRate.toFixed(4),
+                                        alert.to,
+                                        alert.condition,
+                                        alert.targetRate
+                                    );
+
+                                    new Notification(t.alerts.triggered, {
+                                        body: body,
+                                        icon: '/vite.svg'
+                                    });
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Notification failed:', e);
+                    }
+                };
+
+                sendNotification();
             }
         });
 
@@ -335,7 +378,7 @@ export default function ExchangeForm() {
                 const fromName = treasuryMap[fromCurrency];
                 const toName = treasuryMap[toCurrency];
 
-                if (!fromName || !toName) {
+                if ((!fromName || !toName) && fromCurrency !== 'XAU' && toCurrency !== 'XAU') {
                     console.warn('Currency not supported by Treasury API');
                     setLoadingHistory(false);
                     return;
@@ -355,7 +398,98 @@ export default function ExchangeForm() {
                 }
 
                 try {
-                    // We need to fetch data for both currencies relative to USD
+                    // Special handling for Gold (XAU)
+                    if (fromCurrency === 'XAU' || toCurrency === 'XAU') {
+                        const isXauBase = fromCurrency === 'XAU';
+                        const otherCurrency = isXauBase ? toCurrency : fromCurrency;
+
+                        // Use CryptoCompare API for PAXG (Gold proxy)
+                        // It supports CORS and has good limits (2000 days)
+                        const limit = timeRange === '5Y' || timeRange === '10Y' || timeRange === 'Max' ? 1825 : 365;
+                        const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=PAXG&tsym=USD&limit=${limit}`;
+
+                        const res = await fetch(url);
+                        const json = await res.json();
+
+                        if (json.Response !== 'Success') {
+                            throw new Error('CryptoCompare API error: ' + json.Message);
+                        }
+
+                        const data = json.Data.Data;
+
+                        const chartData = data.map((item: any) => {
+                            const date = new Date(item.time * 1000).toISOString().split('T')[0];
+                            const price = item.close; // PAXG price in USD
+
+                            return {
+                                date,
+                                price
+                            };
+                        });
+
+                        // If the other currency is USD, we are done.
+                        if (otherCurrency === 'USD') {
+                            const finalData = chartData.map((d: any) => ({
+                                date: d.date,
+                                rate: isXauBase ? d.price : 1 / d.price
+                            }));
+
+                            localStorage.setItem(cacheKey, JSON.stringify({
+                                data: finalData,
+                                timestamp: Date.now()
+                            }));
+                            setHistoryData(finalData);
+                            setLoadingHistory(false);
+                            return;
+                        }
+
+                        // If other currency is NOT USD, we try to fetch Treasury data
+                        const startDateStr = new Date(Date.now() - (timeRange === 'Max' ? 25 : parseInt(timeRange)) * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                        const treasuryUrl = `https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/rates_of_exchange?filter=country_currency_desc:in:(${otherCurrency === 'EUR' ? 'Euro' : otherCurrency}),record_date:gte:${startDateStr}&page[size]=3000`;
+
+                        const treasuryRes = await fetch(treasuryUrl);
+                        const treasuryJson = await treasuryRes.json();
+                        const treasuryData = treasuryJson.data;
+
+                        const otherRates: Record<string, number> = {};
+                        treasuryData.forEach((item: any) => {
+                            otherRates[item.record_date] = parseFloat(item.exchange_rate);
+                        });
+
+                        // Merge
+                        const combinedData = chartData.map((d: any) => {
+                            // For non-USD pairs, we need to convert
+                            // XAU/USD = price
+                            // Other/USD = otherRate
+                            // XAU/Other = price / otherRate
+
+                            // Find closest date in treasury data
+                            // Since Treasury is sparse, this is imperfect.
+                            // We will try to find a rate within 30 days, otherwise use last known.
+
+                            // Simple lookup for now
+                            const otherRate = otherRates[d.date];
+
+                            // If no rate found, we might skip or use previous?
+                            // For now, if no rate, we skip to avoid misleading data
+                            if (!otherRate) return null;
+
+                            return {
+                                date: d.date,
+                                rate: isXauBase ? d.price / otherRate : otherRate / d.price
+                            };
+                        }).filter((d: any) => d !== null);
+
+                        localStorage.setItem(cacheKey, JSON.stringify({
+                            data: combinedData,
+                            timestamp: Date.now()
+                        }));
+                        setHistoryData(combinedData);
+                        setLoadingHistory(false);
+                        return;
+                    }
+
+                    // Standard Treasury API logic for non-Gold pairs
                     // Filter for both currencies
                     const filterNames = [fromName, toName].filter(n => n !== 'USD').join(',');
                     const url = `https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/rates_of_exchange?filter=country_currency_desc:in:(${filterNames}),record_date:gte:${startDateStr}&page[size]=3000`;
@@ -389,11 +523,6 @@ export default function ExchangeForm() {
 
                         if (!fromRate || !toRate) return null;
 
-                        // Treasury rates are "Foreign per 1 USD"
-                        // So 1 USD = fromRate FROM
-                        // 1 USD = toRate TO
-                        // 1 FROM = (toRate / fromRate) TO
-
                         return {
                             date,
                             rate: toRate / fromRate
@@ -408,7 +537,7 @@ export default function ExchangeForm() {
                     setHistoryData(chartData);
 
                 } catch (e) {
-                    console.error('Failed to fetch treasury data', e);
+                    console.error('Failed to fetch history data', e);
                 }
             }
 
