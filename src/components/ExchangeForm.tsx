@@ -3,6 +3,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { translations, type Language } from '../i18n';
 import HistoryChart from './HistoryChart';
+import PriceAlerts from './PriceAlerts';
 
 // Default currency list (structure only, names come from i18n)
 const defaultCurrencies = [
@@ -26,6 +27,38 @@ const defaultCurrencies = [
     { code: 'MYR', flag: '🇲🇾' },
     { code: 'XAU', flag: '🥇' },
 ];
+
+// Treasury API currency mapping
+const treasuryMap: Record<string, string> = {
+    'TWD': 'Taiwan-Dollar',
+    'EUR': 'Euro Zone-Euro',
+    'JPY': 'Japan-Yen',
+    'CNY': 'China-Renminbi',
+    'HKD': 'Hong Kong-Dollar',
+    'KRW': 'Korea-Won',
+    'GBP': 'United Kingdom-Pound Sterling',
+    'AUD': 'Australia-Dollar',
+    'CAD': 'Canada-Dollar',
+    'SGD': 'Singapore-Dollar',
+    'CHF': 'Switzerland-Franc',
+    'NZD': 'New Zealand-Dollar',
+    'THB': 'Thailand-Baht',
+    'PHP': 'Philippines-Peso',
+    'IDR': 'Indonesia-Rupiah',
+    'VND': 'Vietnam-Dong',
+    'MYR': 'Malaysia-Ringgit',
+    'USD': 'USD' // Special case
+};
+
+// Check if long-term history data is available for a currency pair
+const hasLongTermData = (from: string, to: string): boolean => {
+    // XAU with USD always has long-term data
+    if ((from === 'XAU' && to === 'USD') || (from === 'USD' && to === 'XAU')) {
+        return true;
+    }
+    // Both currencies must be in treasury map for long-term data
+    return treasuryMap[from] !== undefined && treasuryMap[to] !== undefined;
+};
 
 interface Alert {
     id: string;
@@ -74,14 +107,42 @@ export default function ExchangeForm() {
     const [showAlerts, setShowAlerts] = useState(false);
 
     // Alert Form State
-    const [alertTarget, setAlertTarget] = useState('');
-    const [alertCondition, setAlertCondition] = useState<'above' | 'below'>('above');
+
 
     // History State
     const [showHistory, setShowHistory] = useState(false);
     const [historyData, setHistoryData] = useState<HistoryData[]>([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [timeRange, setTimeRange] = useState<'14D' | '3Y' | '5Y' | '10Y' | 'Max'>('14D');
+
+    // Helper to guess currency from timezone
+    const getLocalCurrency = (): string => {
+        try {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (tz.includes('Taipei')) return 'TWD';
+            if (tz.includes('Tokyo')) return 'JPY';
+            if (tz.includes('Seoul')) return 'KRW';
+            if (tz.includes('Hong_Kong')) return 'HKD';
+            if (tz.includes('Shanghai') || tz.includes('Beijing')) return 'CNY';
+            if (tz.includes('Singapore')) return 'SGD';
+            if (tz.includes('Bangkok')) return 'THB';
+            if (tz.includes('Ho_Chi_Minh')) return 'VND';
+            if (tz.includes('Jakarta')) return 'IDR';
+            if (tz.includes('Kuala_Lumpur')) return 'MYR';
+            if (tz.includes('Manila')) return 'PHP';
+            if (tz.includes('Sydney') || tz.includes('Melbourne')) return 'AUD';
+            if (tz.includes('London')) return 'GBP';
+            if (tz.includes('Paris') || tz.includes('Berlin') || tz.includes('Rome') || tz.includes('Madrid') || tz.includes('Amsterdam')) return 'EUR';
+            if (tz.includes('Zurich')) return 'CHF';
+            if (tz.includes('Toronto') || tz.includes('Vancouver')) return 'CAD';
+            if (tz.includes('New_York') || tz.includes('Los_Angeles') || tz.includes('Chicago')) return 'USD';
+        } catch (e) {
+            console.warn('Failed to detect timezone currency', e);
+        }
+        return 'USD'; // Default
+    };
+
+    const [localCurrency] = useState<string>(getLocalCurrency());
 
     // Track triggered alerts to prevent repeated notifications
     const triggeredAlerts = useRef<Set<string>>(new Set());
@@ -189,7 +250,9 @@ export default function ExchangeForm() {
 
         // Check Alerts
         alerts.forEach(alert => {
-            const currentRate = rates[alert.to] / rates[alert.from];
+            // Invert rate: How much Base(From) needed for 1 Target(To)
+            // e.g. 1 USD (To) = 31.5 TWD (From)
+            const currentRate = rates[alert.from] / rates[alert.to];
             let triggered = false;
             if (alert.condition === 'above' && currentRate >= alert.targetRate) triggered = true;
             if (alert.condition === 'below' && currentRate <= alert.targetRate) triggered = true;
@@ -214,9 +277,9 @@ export default function ExchangeForm() {
                                     {
                                         title: t.alerts.triggered,
                                         body: t.alerts.body(
-                                            alert.from,
+                                            alert.to, // Swap: 1 Target
                                             currentRate.toFixed(4),
-                                            alert.to,
+                                            alert.from, // = X Base
                                             alert.condition,
                                             alert.targetRate
                                         ),
@@ -238,9 +301,9 @@ export default function ExchangeForm() {
 
                                 if (Notification.permission === 'granted') {
                                     const body = t.alerts.body(
-                                        alert.from,
+                                        alert.to, // Swap
                                         currentRate.toFixed(4),
-                                        alert.to,
+                                        alert.from, // Swap
                                         alert.condition,
                                         alert.targetRate
                                     );
@@ -354,26 +417,7 @@ export default function ExchangeForm() {
                 }
                 const startDateStr = startDate.toISOString().split('T')[0];
 
-                const treasuryMap: Record<string, string> = {
-                    'TWD': 'Taiwan-Dollar',
-                    'EUR': 'Euro Zone-Euro',
-                    'JPY': 'Japan-Yen',
-                    'CNY': 'China-Renminbi',
-                    'HKD': 'Hong Kong-Dollar',
-                    'KRW': 'Korea-Won',
-                    'GBP': 'United Kingdom-Pound Sterling',
-                    'AUD': 'Australia-Dollar',
-                    'CAD': 'Canada-Dollar',
-                    'SGD': 'Singapore-Dollar',
-                    'CHF': 'Switzerland-Franc',
-                    'NZD': 'New Zealand-Dollar',
-                    'THB': 'Thailand-Baht',
-                    'PHP': 'Philippines-Peso',
-                    'IDR': 'Indonesia-Rupiah',
-                    'VND': 'Vietnam-Dong',
-                    'MYR': 'Malaysia-Ringgit',
-                    'USD': 'USD' // Special case
-                };
+                // treasuryMap is now defined at module scope
 
                 const fromName = treasuryMap[fromCurrency];
                 const toName = treasuryMap[toCurrency];
@@ -564,27 +608,7 @@ export default function ExchangeForm() {
         localStorage.setItem('currencyOrder', JSON.stringify(newList));
     };
 
-    const addAlert = () => {
-        const target = parseFloat(alertTarget);
-        if (isNaN(target) || target <= 0) return;
 
-        const newAlert: Alert = {
-            id: Date.now().toString(),
-            from: fromCurrency,
-            to: toCurrency,
-            targetRate: target,
-            condition: alertCondition
-        };
-
-        const newAlerts = [...alerts, newAlert];
-        setAlerts(newAlerts);
-        localStorage.setItem('priceAlerts', JSON.stringify(newAlerts));
-        setAlertTarget('');
-
-        if (Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
-    };
 
     const removeAlert = (id: string) => {
         const newAlerts = alerts.filter(a => a.id !== id);
@@ -724,18 +748,24 @@ export default function ExchangeForm() {
 
                         {showHistory && (
                             <div className="flex justify-center gap-2">
-                                {(['14D', '3Y', '5Y', '10Y', 'Max'] as const).map((range) => (
-                                    <button
-                                        key={range}
-                                        onClick={() => setTimeRange(range)}
-                                        className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${timeRange === range
-                                            ? 'bg-purple-500 text-white shadow-lg'
-                                            : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                                            }`}
-                                    >
-                                        {range}
-                                    </button>
-                                ))}
+                                {(['14D', '3Y', '5Y', '10Y', 'Max'] as const)
+                                    .filter(range => {
+                                        // Only show 14D if long-term data is not available
+                                        if (range === '14D') return true;
+                                        return hasLongTermData(fromCurrency, toCurrency);
+                                    })
+                                    .map((range) => (
+                                        <button
+                                            key={range}
+                                            onClick={() => setTimeRange(range)}
+                                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${timeRange === range
+                                                ? 'bg-purple-500 text-white shadow-lg'
+                                                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                                                }`}
+                                        >
+                                            {range}
+                                        </button>
+                                    ))}
                             </div>
                         )}
                     </div>
@@ -812,88 +842,28 @@ export default function ExchangeForm() {
                 </div>
             )}
 
-            {/* Alerts Modal */}
-            {showAlerts && (
-                <div className="absolute inset-0 z-20 bg-slate-900/95 backdrop-blur-xl rounded-3xl p-6 flex flex-col animate-in fade-in zoom-in duration-200">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-xl font-bold text-white">{t.alerts.title}</h3>
-                        <button
-                            onClick={() => setShowAlerts(false)}
-                            className="p-2 text-gray-400 hover:text-white"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
-                    </div>
-
-                    {/* Add Alert Form */}
-                    <div className="bg-white/5 p-4 rounded-xl mb-4 border border-white/10">
-                        <div className="flex items-center justify-between text-sm text-gray-300 mb-2">
-                            <span>1 {fromCurrency}</span>
-                            <span className="text-purple-400 font-bold">
-                                {(rates[toCurrency] / rates[fromCurrency]).toFixed(4)} {toCurrency}
-                            </span>
-                        </div>
-                        <div className="flex flex-col sm:flex-row gap-2 mb-2">
-                            <select
-                                value={alertCondition}
-                                onChange={(e) => setAlertCondition(e.target.value as 'above' | 'below')}
-                                className="w-full sm:w-auto bg-black/20 text-white rounded-lg px-2 py-2 border border-white/10 focus:outline-none focus:border-purple-500"
-                            >
-                                <option value="above">{t.alerts.above}</option>
-                                <option value="below">{t.alerts.below}</option>
-                            </select>
-                            <input
-                                type="number"
-                                value={alertTarget}
-                                onChange={(e) => setAlertTarget(e.target.value)}
-                                placeholder={t.alerts.targetRate}
-                                className="w-full sm:flex-1 bg-black/20 text-white rounded-lg px-3 py-2 border border-white/10 focus:outline-none focus:border-purple-500"
-                            />
-                        </div>
-                        <button
-                            onClick={addAlert}
-                            disabled={!alertTarget}
-                            className="w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {t.alerts.setAlert}
-                        </button>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                        {alerts.length === 0 ? (
-                            <div className="text-center text-gray-500 mt-8">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 mx-auto mb-2 opacity-50">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-                                </svg>
-                                <p>{t.alerts.noAlerts}</p>
-                            </div>
-                        ) : (
-                            alerts.map((alert) => (
-                                <div key={alert.id} className="bg-white/5 p-3 rounded-xl border border-white/5 flex justify-between items-center">
-                                    <div>
-                                        <div className="text-white text-sm">
-                                            1 {alert.from} <span className="text-gray-400">{t.to}</span> {alert.to}
-                                        </div>
-                                        <div className="text-purple-300 font-bold">
-                                            {alert.condition === 'above' ? '≥' : '≤'} {alert.targetRate}
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => removeAlert(alert.id)}
-                                        className="p-2 text-gray-400 hover:text-red-400 transition-colors"
-                                    >
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-            )}
+            {/* New Price Alerts Component */}
+            <PriceAlerts
+                isOpen={showAlerts}
+                onClose={() => setShowAlerts(false)}
+                alerts={alerts}
+                setAlerts={(newAlerts) => {
+                    setAlerts(newAlerts);
+                    localStorage.setItem('priceAlerts', JSON.stringify(newAlerts));
+                }}
+                fromCurrency={fromCurrency}
+                toCurrency={toCurrency}
+                onCurrencyChange={(from, to) => {
+                    setFromCurrency(from);
+                    setToCurrency(to);
+                }}
+                // Invert rate: Show how much Base(From) for 1 Target(To)
+                currentRate={rates[fromCurrency] / rates[toCurrency]}
+                onRemoveAlert={removeAlert}
+                currencyList={currencyList}
+                localCurrency={localCurrency}
+                t={t}
+            />
 
             {/* Loading Mask */}
             {loading && (

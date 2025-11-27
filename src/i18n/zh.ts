@@ -18,12 +18,23 @@ export const zh = {
     },
     alerts: {
         title: "價格提醒",
+        newAlert: "新增提醒",
         setAlert: "設定提醒",
         noAlerts: "目前沒有提醒",
         targetRate: "目標匯率",
         above: "高於 (≥)",
         below: "低於 (≤)",
         triggered: "匯率到價通知！🚨",
+        base: "基礎貨幣 (您的位置)",
+        target: "目標貨幣",
+        currentRate: "目前匯率",
+        setTargetRate: "設定目標匯率",
+        cancel: "取消",
+        addAlert: "新增提醒",
+        low30d: "30天最低",
+        avg: "平均",
+        high30d: "30天最高",
+        current: "目前",
         body: (from: string, rate: string, to: string, condition: string, target: number) =>
             `1 ${from} 目前為 ${rate} ${to} (${condition === 'above' ? '高於' : '低於'} ${target})`
     },

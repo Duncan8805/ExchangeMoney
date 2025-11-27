@@ -18,12 +18,23 @@ export const en = {
     },
     alerts: {
         title: "Price Alerts",
+        newAlert: "New Alert",
         setAlert: "Set Alert",
         noAlerts: "No active alerts",
         targetRate: "Target Rate",
         above: "Above (≥)",
         below: "Below (≤)",
         triggered: "Price Alert Triggered! 🚨",
+        base: "Base (Your Location)",
+        target: "Target",
+        currentRate: "Current Rate",
+        setTargetRate: "Set Target Rate",
+        cancel: "Cancel",
+        addAlert: "Add Alert",
+        low30d: "30D Low",
+        avg: "Average",
+        high30d: "30D High",
+        current: "Current",
         body: (from: string, rate: string, to: string, condition: string, target: number) =>
             `1 ${from} is now ${rate} ${to} (${condition} ${target})`
     },
