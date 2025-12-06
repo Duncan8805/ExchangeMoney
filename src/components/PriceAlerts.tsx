@@ -47,6 +47,7 @@ export default function PriceAlerts({
 }: PriceAlertsProps) {
     const [view, setView] = useState<'list' | 'add'>('list');
     const [targetRate, setTargetRate] = useState<string>('');
+    const [condition, setCondition] = useState<'above' | 'below'>('above');
 
     // Reset state when opening
     // Reset state when opening
@@ -117,6 +118,14 @@ export default function PriceAlerts({
         }
     }, [toCurrency]);
 
+    // Auto-set condition when target rate changes
+    useEffect(() => {
+        const rate = parseFloat(targetRate);
+        if (!isNaN(rate) && rate > 0) {
+            setCondition(rate >= currentRate ? 'above' : 'below');
+        }
+    }, [targetRate, currentRate]);
+
 
 
     const handleAddAlert = () => {
@@ -128,7 +137,7 @@ export default function PriceAlerts({
             from: localCurrency, // Always use local currency
             to: toCurrency,
             targetRate: rate,
-            condition: rate > currentRate ? 'above' : 'below'
+            condition: condition
         };
 
         setAlerts([...alerts, newAlert]);
@@ -270,9 +279,27 @@ export default function PriceAlerts({
                             </div>
                         </div>
 
-                        {/* Input Section */}
+
+
+                        {/* Condition Selector */}
+                        <div className="relative mb-4">
+                            <select
+                                value={condition}
+                                onChange={(e) => setCondition(e.target.value as 'above' | 'below')}
+                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white appearance-none focus:outline-none focus:border-purple-500 font-bold"
+                            >
+                                <option value="above" className="bg-slate-800">{t.alerts.above}</option>
+                                <option value="below" className="bg-slate-800">{t.alerts.below}</option>
+                            </select>
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                                </svg>
+                            </div>
+                        </div>
+
                         <div className="space-y-3">
-                            <label className="text-sm text-gray-400 font-medium">{t.alerts.setTargetRate}</label>
+                            <label className="text-sm text-gray-400 font-medium">{t.alerts.targetRate}</label>
                             <div className="relative">
                                 <input
                                     type="number"
