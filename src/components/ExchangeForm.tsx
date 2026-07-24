@@ -182,11 +182,13 @@ export default function ExchangeForm() {
                 let newRates = { ...currencyData.rates };
 
                 // 2. Fetch Gold Price (USD per Ounce)
+                // Use gold-api.com: free, no API key, and sends "Access-Control-Allow-Origin: *"
+                // so it works from the browser on GitHub Pages. goldprice.org was blocked by CORS.
                 try {
-                    const goldRes = await fetch('https://data-asg.goldprice.org/dbXRates/USD');
+                    const goldRes = await fetch('https://api.gold-api.com/price/XAU');
                     const goldData = await goldRes.json();
-                    if (goldData.items && goldData.items.length > 0) {
-                        const xauPriceInUSD = goldData.items[0].xauPrice;
+                    const xauPriceInUSD = goldData.price;
+                    if (typeof xauPriceInUSD === 'number' && xauPriceInUSD > 0) {
                         newRates['XAU'] = 1 / xauPriceInUSD;
                     }
                 } catch (goldError) {
@@ -442,93 +444,76 @@ export default function ExchangeForm() {
                 }
 
                 try {
-                    // Special handling for Gold (XAU)
+                    // Special handling for Gold (XAU).
+                    // CryptoCompare's histoday now requires an API key (returns 401), so we use
+                    // the fawazahmed0 currency-api CDN — the same source the 14D path already uses.
+                    // Its usd.json includes an "xau" rate, so the generic rate math works for gold too.
+                    // The CDN only carries ~1-2 years of history, so long ranges (5Y/10Y/Max) will
+                    // simply show data back to the earliest available date. We sample monthly to keep
+                    // the request count small instead of fetching every single day.
                     if (fromCurrency === 'XAU' || toCurrency === 'XAU') {
-                        const isXauBase = fromCurrency === 'XAU';
-                        const otherCurrency = isXauBase ? toCurrency : fromCurrency;
-
-                        // Use CryptoCompare API for PAXG (Gold proxy)
-                        // It supports CORS and has good limits (2000 days)
-                        const limit = timeRange === '5Y' || timeRange === '10Y' || timeRange === 'Max' ? 1825 : 365;
-                        const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=PAXG&tsym=USD&limit=${limit}`;
-
-                        const res = await fetch(url);
-                        const json = await res.json();
-
-                        if (json.Response !== 'Success') {
-                            throw new Error('CryptoCompare API error: ' + json.Message);
+                        // Build a list of monthly sample dates from startDate to today.
+                        const sampleDates: string[] = [];
+                        const cursor = new Date(startDate);
+                        cursor.setDate(1);
+                        const today = new Date();
+                        while (cursor <= today) {
+                            sampleDates.push(cursor.toISOString().split('T')[0]);
+                            cursor.setMonth(cursor.getMonth() + 1);
                         }
+                        // Always include today's date as the final point.
+                        sampleDates.push(today.toISOString().split('T')[0]);
 
-                        const data = json.Data.Data;
+                        const goldPromises = sampleDates.map(async (date) => {
+                            const dayCacheKey = `history_usd_${date}`;
+                            const cachedDay = localStorage.getItem(dayCacheKey);
+                            let usdRates: Record<string, number> | null = null;
 
-                        const chartData = data.map((item: any) => {
-                            const date = new Date(item.time * 1000).toISOString().split('T')[0];
-                            const price = item.close; // PAXG price in USD
+                            if (cachedDay) {
+                                const parsed = JSON.parse(cachedDay);
+                                if (Date.now() - parsed.timestamp < CACHE_DURATION) {
+                                    usdRates = parsed.data;
+                                }
+                            }
 
-                            return {
-                                date,
-                                price
-                            };
+                            if (!usdRates) {
+                                try {
+                                    const res = await fetch(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/usd.json`);
+                                    if (!res.ok) return null; // date not available on the CDN
+                                    const data = await res.json();
+                                    usdRates = data.usd;
+                                    localStorage.setItem(dayCacheKey, JSON.stringify({
+                                        data: usdRates,
+                                        timestamp: Date.now()
+                                    }));
+                                } catch {
+                                    return null;
+                                }
+                            }
+
+                            if (!usdRates) return null;
+                            const fromRate = usdRates[fromCurrency.toLowerCase()];
+                            const toRate = usdRates[toCurrency.toLowerCase()];
+                            if (!fromRate || !toRate) return null;
+
+                            let rate;
+                            if (fromCurrency === 'USD') rate = toRate;
+                            else if (toCurrency === 'USD') rate = 1 / fromRate;
+                            else rate = toRate / fromRate;
+
+                            return { date, rate };
                         });
 
-                        // If the other currency is USD, we are done.
-                        if (otherCurrency === 'USD') {
-                            const finalData = chartData.map((d: any) => ({
-                                date: d.date,
-                                rate: isXauBase ? d.price : 1 / d.price
-                            }));
-
-                            localStorage.setItem(cacheKey, JSON.stringify({
-                                data: finalData,
-                                timestamp: Date.now()
-                            }));
-                            setHistoryData(finalData);
-                            setLoadingHistory(false);
-                            return;
-                        }
-
-                        // If other currency is NOT USD, we try to fetch Treasury data
-                        const startDateStr = new Date(Date.now() - (timeRange === 'Max' ? 25 : parseInt(timeRange)) * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                        const treasuryUrl = `https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/rates_of_exchange?filter=country_currency_desc:in:(${otherCurrency === 'EUR' ? 'Euro' : otherCurrency}),record_date:gte:${startDateStr}&page[size]=3000`;
-
-                        const treasuryRes = await fetch(treasuryUrl);
-                        const treasuryJson = await treasuryRes.json();
-                        const treasuryData = treasuryJson.data;
-
-                        const otherRates: Record<string, number> = {};
-                        treasuryData.forEach((item: any) => {
-                            otherRates[item.record_date] = parseFloat(item.exchange_rate);
-                        });
-
-                        // Merge
-                        const combinedData = chartData.map((d: any) => {
-                            // For non-USD pairs, we need to convert
-                            // XAU/USD = price
-                            // Other/USD = otherRate
-                            // XAU/Other = price / otherRate
-
-                            // Find closest date in treasury data
-                            // Since Treasury is sparse, this is imperfect.
-                            // We will try to find a rate within 30 days, otherwise use last known.
-
-                            // Simple lookup for now
-                            const otherRate = otherRates[d.date];
-
-                            // If no rate found, we might skip or use previous?
-                            // For now, if no rate, we skip to avoid misleading data
-                            if (!otherRate) return null;
-
-                            return {
-                                date: d.date,
-                                rate: isXauBase ? d.price / otherRate : otherRate / d.price
-                            };
-                        }).filter((d: any) => d !== null);
+                        const goldResults = await Promise.all(goldPromises);
+                        const goldChartData = goldResults
+                            .filter((r): r is HistoryData => r !== null && typeof r.rate === 'number' && isFinite(r.rate))
+                            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
                         localStorage.setItem(cacheKey, JSON.stringify({
-                            data: combinedData,
+                            data: goldChartData,
                             timestamp: Date.now()
                         }));
-                        setHistoryData(combinedData);
+                        setHistoryData(goldChartData);
                         setLoadingHistory(false);
                         return;
                     }
